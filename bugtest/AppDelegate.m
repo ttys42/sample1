@@ -57,37 +57,48 @@
 
 SDMMD_AMConnectionRef AttachToDeviceAndService(SDMMD_AMDeviceRef device, char *service) {
     SDMMD_AMConnectionRef serviceCon = NULL;
-    if (device) {
-        sdmmd_return_t result = SDMMD_AMDeviceConnect(device);
-        if (SDM_MD_CallSuccessful(result)) {
-            result = SDMMD_AMDeviceStartSession(device);
-            if (SDM_MD_CallSuccessful(result)) {
-                CFStringRef serviceString = CFStringCreateWithCString(kCFAllocatorDefault, service, kCFStringEncodingUTF8);
-                result = SDMMD_AMDeviceStartService(device, serviceString, NULL, &serviceCon);
-                if (SDM_MD_CallSuccessful(result)) {
-                    CFTypeRef deviceName = SDMMD_AMDeviceCopyValue(device, NULL, CFSTR(kDeviceName));
-                    char *name = CreateCStringFromCFStringRef(deviceName);
-                    if (!name) {
-                        int unnamed_str_len = strlen("unnamed device");
-                        name = calloc(1, sizeof(char[unnamed_str_len]));
-                        memcpy(name, "unnamed device", sizeof(char[unnamed_str_len]));
-                    }
-                    CFSafeRelease(deviceName);
-                    Safe(free,name);
-                }
-                else {
-                    SDMMD_AMDeviceStopSession(device);
-                    SDMMD_AMDeviceDisconnect(device);
-                    serviceCon = NULL;
-                }
-                CFSafeRelease(serviceString);
-            }
-        }
-    } else {
+    if (!device) {
         printf("Could not find device with that UDID\n");
+        return NULL;
     }
+    
+    sdmmd_return_t result = SDMMD_AMDeviceConnect(device);
+    if (!SDM_MD_CallSuccessful(result)) {
+        return NULL;
+    }
+    
+    result = SDMMD_AMDeviceStartSession(device);
+    if (!SDM_MD_CallSuccessful(result)) {
+        SDMMD_AMDeviceDisconnect(device);
+        return NULL;
+    }
+    
+    CFStringRef serviceString = CFStringCreateWithCString(kCFAllocatorDefault, service, kCFStringEncodingUTF8);
+    result = SDMMD_AMDeviceStartService(device, serviceString, NULL, &serviceCon);
+    if (!SDM_MD_CallSuccessful(result)) {
+        SDMMD_AMDeviceStopSession(device);
+        SDMMD_AMDeviceDisconnect(device);
+        CFSafeRelease(serviceString);
+        return NULL;
+    }
+    
+    CFTypeRef deviceName = SDMMD_AMDeviceCopyValue(device, NULL, CFSTR(kDeviceName));
+    char *name = CreateCStringFromCFStringRef(deviceName);
+    if (!name) {
+        int unnamed_str_len = strlen("unnamed device");
+        name = calloc(1, sizeof(char[unnamed_str_len]));
+        memcpy(name, "unnamed device", sizeof(char[unnamed_str_len]));
+    }
+    //LOGGING                    printf("Connected to %s on \"%s\" ...\n",name,service);
+    CFSafeRelease(deviceName);
+    Safe(free,name);
+    
+    SDMMD_AMDeviceStopSession(device);
+    SDMMD_AMDeviceDisconnect(device);
+    
     return serviceCon;
 }
+
 
 SDMMD_AMDeviceRef FindDeviceFromUDID(char *udid) {
     CFArrayRef devices = SDMMD_AMDCreateDeviceList();
@@ -127,33 +138,40 @@ SDMMD_AMDeviceRef FindDeviceFromUDID(char *udid) {
 
 NSDictionary* SendDeviceCommand(char *udid, CFDictionaryRef request) {
     SDMMD_AMDeviceRef device = FindDeviceFromUDID(udid);
-    if (device) {
-        SDMMD_AMConnectionRef powerDiag = AttachToDeviceAndService(device, AMSVC_DIAG_RELAY);
-        if (request) {
-            SocketConnection socket = SDMMD_TranslateConnectionToSocket(powerDiag);
-            sdmmd_return_t result = SDMMD_ServiceSendMessage(socket, request, kCFPropertyListXMLFormat_v1_0);
-            if (SDM_MD_CallSuccessful(result)) {
-                CFStringRef command = CFDictionaryGetValue(request, CFSTR("Request"));
-                char *commandString = SDMCFStringGetString(command);
-                NSLog(@"Sent %s command to device, this could take up to 5 seconds.\n",commandString);
-                CFDictionaryRef response;
-                result = SDMMD_ServiceReceiveMessage(socket, PtrCast(&response, CFPropertyListRef*));
-                NSLog(@"Result - 0x%02x",(unsigned int)result);
-
-                if (SDM_MD_CallSuccessful(result)) {
-
-                    if (CFGetTypeID(response) == CFDictionaryGetTypeID()) {
-
-                        NSDictionary *responseDict = (__bridge NSDictionary*)response;
-                        return responseDict;
-                    }
-                    else return nil;
-                }
-                Safe(free, commandString);
-            }
-        }
+    if (!device) {
+        return nil;
     }
-    return nil;
+    
+    if (!request) {
+        CFSafeRelease(device);
+        return nil;
+    }
+    
+    SDMMD_AMConnectionRef powerDiag = AttachToDeviceAndService(device, AMSVC_DIAG_RELAY);
+    CFSafeRelease(device);
+    SocketConnection socket = SDMMD_TranslateConnectionToSocket(powerDiag);
+    sdmmd_return_t result = SDMMD_ServiceSendMessage(socket, request, kCFPropertyListXMLFormat_v1_0);
+    
+    if (!SDM_MD_CallSuccessful(result)) {
+        //ServiceSendMEssage not completed
+        return nil;
+    }
+    
+    printf("Sent command to device, this could take up to 5 seconds.\n");
+    CFDictionaryRef response;
+    result = SDMMD_ServiceReceiveMessage(socket, PtrCast(&response, CFPropertyListRef*));
+    NSLog(@"Result - 0x%02x",(unsigned int)result);
+    
+    if (!SDM_MD_CallSuccessful(result)) {
+        return nil;
+    }
+    
+    if (!response) return nil;
+    
+    NSDictionary *responseDict = (__bridge NSDictionary*)response;
+    CFRelease(response);
+    return responseDict;
 }
+
 
 @end
