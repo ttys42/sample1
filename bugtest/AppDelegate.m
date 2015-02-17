@@ -34,12 +34,7 @@
     sdmmd_return_t result;
     SDMMD_AMDeviceRef device = (SDMMD_AMDeviceRef)CFArrayGetValueAtIndex(devices, 0);
     if (SDMMD_AMDeviceIsValid(device)) {
-        result = SDMMD_AMDeviceConnect(device);
-        if (SDM_MD_CallSuccessful(result)) {
-            result = SDMMD_AMDeviceStartSession(device);
-            if (SDM_MD_CallSuccessful(result)) SDMMD_AMDeviceStopSession(device);
-            SDMMD_AMDeviceDisconnect(device);
-            
+        
             CFMutableDictionaryRef request_ioreg = SDMMD__CreateRequestDict(CFSTR("Request"));
             CFDictionarySetValue(request_ioreg, CFSTR("Request"), CFSTR("IORegistry"));
             
@@ -49,9 +44,7 @@
             }
 
             NSDictionary *myDictionary = SendDeviceCommand((char*)[(NSString*)CFBridgingRelease(deviceUDID) UTF8String], request_ioreg);
-        } else NSLog(@"Connect failed");
-    } else NSLog(@"No valid device");
-    
+    }
 }
 
 
